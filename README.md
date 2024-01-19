@@ -30,4 +30,4 @@ The "Datasets/Indian_Names.txt" file is currently unused but is intended for fut
 
 ## License
 
-This project is licensed under the [MIT] - see the [LICENSE](LICENSE) file for details.
+This project is licensed under MIT - see the [LICENSE](LICENSE) file for details.

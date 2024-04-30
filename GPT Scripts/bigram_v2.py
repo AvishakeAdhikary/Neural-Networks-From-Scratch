@@ -71,14 +71,22 @@ class BigramLanguageModel(torch.nn.Module):
         # Initializing the embedding table
         super().__init__()
         self.tokenEmbeddingTable = torch.nn.Embedding(vocabularySize, numberOfEmbeddingDimensions)
+        self.positionalEmbeddingTable = torch.nn.Embedding(blockSize, numberOfEmbeddingDimensions)
         self.languageModelingHead = torch.nn.Linear(numberOfEmbeddingDimensions, vocabularySize)
 
     # Forward Pass
     def forward(self, indeces, labels=None):
+        # Unpacking the shape of indeces
+        batch, time = indeces.shape
+
         # Index into embeddings to get the token embeddings
         tokenEmbeddings = self.tokenEmbeddingTable(indeces) # (B, T, C)
-        # Pass the token embeddings through a linear layer
-        logits = self.languageModelingHead(tokenEmbeddings) # (B, T, C)
+        # Index into embeddings to get the positional embeddings
+        positionalEmbeddings = self.positionalEmbeddingTable(torch.arange(time, device=device)) # (T, C)
+        # Fuse the token embeddings and positional embeddings together to pack the information in a single tensor
+        concatenatedEmbeddings = tokenEmbeddings + positionalEmbeddings # (B, T, C)
+        # Pass the concatenated embeddings through a linear layer
+        logits = self.languageModelingHead(concatenatedEmbeddings) # (B, T, C)
 
         if labels is None:
             loss = None

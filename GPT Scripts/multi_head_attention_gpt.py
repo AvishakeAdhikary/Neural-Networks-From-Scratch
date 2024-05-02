@@ -10,7 +10,9 @@ evaluationIntervals = 500
 evaluationIterations = 200
 numberOfEmbeddingDimensions = 32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+numberOfHeads = 4
 headSize = numberOfEmbeddingDimensions
+
 
 # Manual Seed
 torch.manual_seed(69420)
@@ -95,6 +97,18 @@ class Head(torch.nn.Module):
         output = weights @ v # (B, T, C)
         return output
 
+# Multi-Head Attention Module Definiton
+class MultiHeadAttention(torch.nn.Module):
+    """ Multiple Heads of Self Attention in Parallel """
+    # Constructor for the Multi-Head Attention
+    def __init__(self, numberOfHeads, headSize):
+        super().__init__()
+        self.heads = torch.nn.ModuleList([Head(headSize=headSize) for _ in range(numberOfHeads)])
+
+    # Forward Pass
+    def forward(self, inputs):
+        # Returns the concatenated heads over the channel dimension
+        return torch.cat([head(inputs) for head in self.heads], dim=-1)
 
 # Model Module Definition
 class GPTModel(torch.nn.Module):
@@ -104,7 +118,7 @@ class GPTModel(torch.nn.Module):
         super().__init__()
         self.tokenEmbeddingTable = torch.nn.Embedding(vocabularySize, numberOfEmbeddingDimensions)
         self.positionalEmbeddingTable = torch.nn.Embedding(blockSize, numberOfEmbeddingDimensions)
-        self.selfAttentionHead = Head(headSize=headSize)
+        self.selfAttentionHeads = MultiHeadAttention(numberOfHeads=numberOfHeads, headSize=numberOfEmbeddingDimensions//numberOfHeads)
         self.languageModelingHead = torch.nn.Linear(numberOfEmbeddingDimensions, vocabularySize)
 
     # Forward Pass
@@ -118,8 +132,8 @@ class GPTModel(torch.nn.Module):
         positionalEmbeddings = self.positionalEmbeddingTable(torch.arange(time, device=device)) # (T, C)
         # Fuse the token embeddings and positional embeddings together to pack the information in a single tensor
         embeddings = tokenEmbeddings + positionalEmbeddings # (B, T, C)
-        # Pass the concatenated embeddings into our self attention head
-        embeddings = self.selfAttentionHead(embeddings) # (B, T, C)
+        # Pass the concatenated embeddings into our multihead attention
+        embeddings = self.selfAttentionHeads(embeddings) # (B, T, C)
         # Pass the embeddings through a linear layer
         logits = self.languageModelingHead(embeddings) # (B, T, C)
 

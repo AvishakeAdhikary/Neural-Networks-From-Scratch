@@ -4,12 +4,13 @@ import torch.nn.functional as F
 # Hyper-Parameters
 batchSize = 32 # Number of independent sequences of characters we want to process in parallel
 blockSize = 8 # Maximum context length of predictions
-learningRate = 1e-2
-epochs = 30000
+learningRate = 1e-3
+epochs = 50000
 evaluationIntervals = 500
 evaluationIterations = 200
 numberOfEmbeddingDimensions = 32
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+headSize = numberOfEmbeddingDimensions
 
 # Manual Seed
 torch.manual_seed(69420)
@@ -64,14 +65,45 @@ def estimateLoss():
     model.train()
     return output
 
+# Head Module Definiton
+class Head(torch.nn.Module):
+    """ Single Head of Self Attention """
+    # Constructor for the Head
+    def __init__(self, headSize):
+        super().__init__()
+        self.key = torch.nn.Linear(numberOfEmbeddingDimensions, headSize, bias=False)
+        self.query = torch.nn.Linear(numberOfEmbeddingDimensions, headSize, bias=False)
+        self.value = torch.nn.Linear(numberOfEmbeddingDimensions, headSize, bias=False)
+        self.register_buffer(name='lowerTriangularMatrix', tensor=torch.tril(torch.ones(blockSize, blockSize)))
+
+    def forward(self, inputs):
+        # Unpacking the shape of inputs
+        batch, time, channel = inputs.shape
+        # Forwarding the inputs to keys and queries
+        k = self.key(inputs) # (B, T, C)
+        q = self.query(inputs) # (B, T, C)
+        # Initializing weights with scaled dot product
+        weights = q @ k.transpose(-2, -1) * headSize ** -0.5 # (B, T, T)
+        # Masking the weights
+        weights = weights.masked_fill(self.lowerTriangularMatrix[:time, :time] == 0, float('-inf')) # (B, T, T)
+        # Softmax the weights
+        weights = F.softmax(weights, dim=-1) # (B, T, T)
+        # Forwarding the inputs to values
+        v = self.value(inputs) # (B, T, C)
+        # Aggregating the weights and the values
+        output = weights @ v # (B, T, C)
+        return output
+
+
 # Model Module Definition
-class BigramLanguageModel(torch.nn.Module):
+class GPTModel(torch.nn.Module):
     # Constructor for the model
     def __init__(self):
         # Initializing the embedding table
         super().__init__()
         self.tokenEmbeddingTable = torch.nn.Embedding(vocabularySize, numberOfEmbeddingDimensions)
         self.positionalEmbeddingTable = torch.nn.Embedding(blockSize, numberOfEmbeddingDimensions)
+        self.selfAttentionHead = Head(headSize=headSize)
         self.languageModelingHead = torch.nn.Linear(numberOfEmbeddingDimensions, vocabularySize)
 
     # Forward Pass
@@ -84,9 +116,11 @@ class BigramLanguageModel(torch.nn.Module):
         # Index into embeddings to get the positional embeddings
         positionalEmbeddings = self.positionalEmbeddingTable(torch.arange(time, device=device)) # (T, C)
         # Fuse the token embeddings and positional embeddings together to pack the information in a single tensor
-        concatenatedEmbeddings = tokenEmbeddings + positionalEmbeddings # (B, T, C)
-        # Pass the concatenated embeddings through a linear layer
-        logits = self.languageModelingHead(concatenatedEmbeddings) # (B, T, C)
+        embeddings = tokenEmbeddings + positionalEmbeddings # (B, T, C)
+        # Pass the concatenated embeddings into our self attention head
+        embeddings = self.selfAttentionHead(embeddings) # (B, T, C)
+        # Pass the embeddings through a linear layer
+        logits = self.languageModelingHead(embeddings) # (B, T, C)
 
         if labels is None:
             loss = None
@@ -118,7 +152,7 @@ class BigramLanguageModel(torch.nn.Module):
         return indeces
 
 # Initializing the model
-model = BigramLanguageModel().to(device=device)
+model = GPTModel().to(device=device)
 
 # Initializing the optimizer
 optimizer = torch.optim.AdamW(model.parameters(), lr=learningRate)

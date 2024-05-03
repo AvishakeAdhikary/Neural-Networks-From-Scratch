@@ -104,11 +104,14 @@ class MultiHeadAttention(torch.nn.Module):
     def __init__(self, numberOfHeads, headSize):
         super().__init__()
         self.heads = torch.nn.ModuleList([Head(headSize=headSize) for _ in range(numberOfHeads)])
+        self.projection = torch.nn.Linear(numberOfEmbeddingDimensions, numberOfEmbeddingDimensions)
 
     # Forward Pass
     def forward(self, inputs):
         # Returns the concatenated heads over the channel dimension
-        return torch.cat([head(inputs) for head in self.heads], dim=-1)
+        output = torch.cat([head(inputs) for head in self.heads], dim=-1)
+        output = self.projection(inputs)
+        return output
 
 # Feed Forward Module Definition
 class FeedForward(torch.nn.Module):
@@ -118,8 +121,9 @@ class FeedForward(torch.nn.Module):
         # Initializing the layers
         super().__init__()
         self.network = torch.nn.Sequential(
-            torch.nn.Linear(numberOfEmbeddingDimensions, numberOfEmbeddingDimensions),
-            torch.nn.ReLU()
+            torch.nn.Linear(numberOfEmbeddingDimensions, 4 * numberOfEmbeddingDimensions),
+            torch.nn.ReLU(),
+            torch.nn.Linear(4 * numberOfEmbeddingDimensions, numberOfEmbeddingDimensions),
         )
 
     # Forward Pass
@@ -137,9 +141,9 @@ class TransformerBlock(torch.nn.Module):
         self.feedforwardnetwork = FeedForward(numberOfEmbeddingDimensions=numberOfEmbeddingDimensions)
 
     # Forward Pass
-    def forward(self, inputs):
-        embeddings = self.selfAttention(inputs) # (B, T, C)
-        embeddings = self.feedforwardnetwork(embeddings) # (B, T, C)
+    def forward(self, embeddings):
+        embeddings = embeddings + self.selfAttention(embeddings) # (B, T, C)
+        embeddings = embeddings + self.feedforwardnetwork(embeddings) # (B, T, C)
         return embeddings
 
 # Model Module Definition

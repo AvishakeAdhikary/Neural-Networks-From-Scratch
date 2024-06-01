@@ -13,6 +13,7 @@ This repository contains a sequence of Jupyter notebooks, each representing a st
 5. **NameWeave - Manual Back Propagation:** This notebook breaks down the MLP model into atomic pieces of code, emphasizing the importance of understanding backpropagation.
 6. **NameWeave - WaveNet:** Inspired by WaveNet architecture, we modify the previous model to resemble convolutional neural networks (CNNs).
 7. **GPT from Scratch:** Implementing all concepts learned previously, we introduce self-attention and decoder-only architecture to generate text, demonstrating the capability of modern architectures like Transformers. The notebook generates infinite Harry Potter-like text based on the provided dataset.
+8. **GPT Tokenizer Notebook:** A new addition to the repository, this notebook focuses on building a tokenizer for preprocessing text data, specifically designed for use with the GPT model.
 
 
 ## Table of Contents
@@ -29,6 +30,7 @@ In this repository, I explore the implementation of neural networks from scratch
 ## Files
 
 - **GPT from Scratch.ipynb:** Jupyter notebook where a GPT model is built from scratch, generating text based on the Harry Potter dataset.
+- **GPT Tokenizer Notebook.ipynb:** New notebook focusing on building a tokenizer for preprocessing text data.
 - **NameWeave (MLP) - Activations, Gradients & Batch Normalization.ipynb:** Jupyter notebook enhancing the NameWeave model with activations, gradients, and batch normalization.
 - **NameWeave - Manual Back Propagation.ipynb:** Jupyter notebook demonstrating manual backpropagation through the NameWeave model.
 - **NameWeave - Multi Layer Perceptron.ipynb:** Jupyter notebook expanding the NameWeave model into a Multi Layer Perceptron with multiple layers.
@@ -40,9 +42,13 @@ In this repository, I explore the implementation of neural networks from scratch
 - **Datasets/:** Directory containing datasets used in the notebooks.
   - **Harry_Potter_Books.txt:** Dataset used in the `GPT from Scratch.ipynb` notebook.
   - **Indian_Names.txt:** Dataset used for all other notebooks.
+  - **Tokenizer/:** Directory for tokenization related files.
+    - **tokenizer_train.txt:** Dataset used for training the tokenizer.
 - **ExplanationMedia/Images/:** Directory containing images used for explaining the notebooks.
 - **ExplanationMedia/Videos/:** Directory containing videos used for explaining the notebooks.
 - **GPT Scripts/:** Directory containing raw Python scripts created for building the GPT model in `GPT from Scratch.ipynb`.
+  - **Tokenizer/:** Directory for tokenizer related scripts.
+    - **tokenizer_train.py:** Script used for training the tokenizer.
 
 ## Usage
 

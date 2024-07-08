@@ -80,6 +80,23 @@ class GPTModel(torch.nn.Module):
         ))
 
         self.languageModelingHead = torch.nn.Linear(configuration.numberOfEmbeddingDimensions, configuration.vocabularySize, bias=False)
+    
+    # Method to transfer weights from Hugging Face GPT-2
+    @classmethod
+    def from_pretrained(cls, modelType):
+        assert modelType in {'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}
+        from transformers import GPT2LMHeadModel
+        print("Loading weights from pretrained gpt: %s" % model_type)
+        
+        # Creating separate configurations for separate GPT-2 models
+        configurationArguements = {
+            'gpt2':         dict(numberOfLayers=12, numberOfHeads=12, numberOfEmbeddingDimensions=768),  # 124M parameters
+            'gpt2-medium':  dict(numberOfLayers=24, numberOfHeads=16, numberOfEmbeddingDimensions=1024), # 350M parameters
+            'gpt2-large':   dict(numberOfLayers=36, numberOfHeads=20, numberOfEmbeddingDimensions=1280), # 774M parameters
+            'gpt2-xl':      dict(numberOfLayers=48, numberOfHeads=25, numberOfEmbeddingDimensions=1600), # 1558M parameters
+        }[modelType]
+        configurationArguements['vocab_size'] = 50257
+        configurationArguements['block_size'] = 1024
 
 model = GPTModel(GPTConfiguration())
 print(model)

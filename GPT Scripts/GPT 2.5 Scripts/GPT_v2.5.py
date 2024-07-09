@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 import math
+import tiktoken
 
 # Causal Self Attention (Scaled Dot-Product Attention + Multi-Head Attention)
 class CausalSelfAttention(torch.nn.Module):
@@ -22,7 +23,7 @@ class CausalSelfAttention(torch.nn.Module):
         key = key.view(B, T, self.numberOfHeads, C // self.numberOfHeads).transpose(1, 2)
         value = value.view(B, T, self.numberOfHeads, C // self.numberOfHeads).transpose(1, 2)
         attention = (query @ key.transpose(-2, -1)) * (1.0 / math.sqrt(key.size(-1)))
-        attention = attention.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        attention = attention.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))
         attention = F.softmax(attention, dim=-1)
         outputs = attention @ value
         outputs = outputs.transpose(1, 2).contiguous().view(B, T, C)
@@ -55,7 +56,8 @@ class Block(torch.nn.Module):
     
     def forward(self, inputs):
         inputs = inputs + self.attention(self.layerNormalization1(inputs))
-        inputs = inputs + self.multiLayerPerceptron(self.layerNormalization1(inputs))
+        inputs = inputs + self.multiLayerPerceptron(self.layerNormalization2(inputs))
+        return inputs
 
 # GPT configuration hyper-parameters
 @dataclass
@@ -81,12 +83,27 @@ class GPTModel(torch.nn.Module):
 
         self.languageModelingHead = torch.nn.Linear(configuration.numberOfEmbeddingDimensions, configuration.vocabularySize, bias=False)
     
+    def forward(self, indeces):
+        Batch, Time = indeces.size()
+        assert Time <= self.configuration.blockSize, f"Cannot forward sequence of length {Time}, Block Size is only {self.configuration.blockSize}"
+
+        tokenPositions = torch.arange(0, Time, dtype=torch.long, device=indeces.device)
+        positionalEmbeddings = self.transformer.wordPositionalEmbeddings(tokenPositions)
+        tokenEmbeddings = self.transformer.wordTokenEmbeddings(indeces)
+        inputs = tokenEmbeddings + positionalEmbeddings
+
+        for block in self.transformer.hidden:
+            inputs = block(inputs)
+        inputs = self.transformer.finalLayerNorm(inputs)
+        logits = self.languageModelingHead(inputs)
+        return logits
+
     # Method to transfer weights from Hugging Face GPT-2
     @classmethod
     def from_pretrained(cls, modelType):
         assert modelType in {'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}
         from transformers import GPT2LMHeadModel
-        print("Loading weights from pretrained gpt: %s" % modelType)
+        print("Loading weights from pretrained GPT: %s" % modelType)
         
         # Creating separate configurations for separate GPT-2 models
         blockSize = 1024
@@ -127,17 +144,50 @@ class GPTModel(torch.nn.Module):
                     assert huggingfaceStateDictionary[huggingfaceKey].shape[::-1] == stateDictionary[customKey].shape
                     with torch.no_grad():
                         stateDictionary[customKey].copy_(huggingfaceStateDictionary[huggingfaceKey].t())
-                # Vanilla copy for other parameters
-                else:
-                    assert huggingfaceStateDictionary[huggingfaceKey].shape == stateDictionary[customKey].shape
-                    with torch.no_grad():
-                        stateDictionary[customKey].copy_(huggingfaceStateDictionary[huggingfaceKey])
-        
+            # Vanilla copy for other parameters
+            else:
+                assert huggingfaceStateDictionary[huggingfaceKey].shape == stateDictionary[customKey].shape
+                with torch.no_grad():
+                    stateDictionary[customKey].copy_(huggingfaceStateDictionary[huggingfaceKey])
         return model
 
 model = GPTModel.from_pretrained('gpt2')
-print(model)
 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+model.eval()
+model.to(device=device)
+
+# Generation
+maximumGenerationLength = 30
+numberOfSequences = 5
+
+encoder = tiktoken.get_encoding('gpt2')
+encodedTokens = encoder.encode("Hello, I'm a language model,")
+encodedTokens = torch.tensor(encodedTokens, dtype=torch.long)
+encodedTokens = encodedTokens.unsqueeze(0).repeat(numberOfSequences, 1)
+inputs = encodedTokens.to(device=device)
+
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+
+while inputs.size(1) < maximumGenerationLength:
+    with torch.no_grad():
+        logits = model(inputs)
+        logits = logits[:, -1, :]
+        probabilites = F.softmax(logits, dim=-1)
+
+        topKProbabilites, tokKIndeces = torch.topk(input=probabilites, k=50, dim=-1)
+
+        tokenIndeces = torch.multinomial(input=topKProbabilites, num_samples=1)
+        columnOfTokenIndeces = torch.gather(input=tokKIndeces, dim=-1, index=tokenIndeces)
+
+        inputs = torch.cat((inputs, columnOfTokenIndeces), dim=1)
+
+for i in range(numberOfSequences):
+    tokensToDecode = inputs[i, :maximumGenerationLength].tolist()
+    decodedTokens = encoder.decode(tokensToDecode)
+    print(">", decodedTokens)
 
 # # If you want to remove the HuggingFace Model manually
 # from transformers import file_utils

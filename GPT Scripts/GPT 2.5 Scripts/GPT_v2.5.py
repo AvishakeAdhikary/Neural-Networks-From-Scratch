@@ -151,9 +151,14 @@ class GPTModel(torch.nn.Module):
                     stateDictionary[customKey].copy_(huggingfaceStateDictionary[huggingfaceKey])
         return model
 
-model = GPTModel.from_pretrained('gpt2')
+device = "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+print(f"Using Device: {device}")
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+model = GPTModel(GPTConfiguration())
 
 model.eval()
 model.to(device=device)

@@ -83,7 +83,7 @@ class GPTModel(torch.nn.Module):
 
         self.languageModelingHead = torch.nn.Linear(configuration.numberOfEmbeddingDimensions, configuration.vocabularySize, bias=False)
     
-    def forward(self, indeces):
+    def forward(self, indeces, labels=None):
         Batch, Time = indeces.size()
         assert Time <= self.configuration.blockSize, f"Cannot forward sequence of length {Time}, Block Size is only {self.configuration.blockSize}"
 
@@ -96,7 +96,10 @@ class GPTModel(torch.nn.Module):
             inputs = block(inputs)
         inputs = self.transformer.finalLayerNorm(inputs)
         logits = self.languageModelingHead(inputs)
-        return logits
+        loss = None
+        if labels is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
+        return logits, loss
 
     # Method to transfer weights from Hugging Face GPT-2
     @classmethod
@@ -151,6 +154,8 @@ class GPTModel(torch.nn.Module):
                     stateDictionary[customKey].copy_(huggingfaceStateDictionary[huggingfaceKey])
         return model
 
+
+# Device Auto-Detection
 device = "cpu"
 if torch.cuda.is_available():
     device = "cuda"
@@ -158,16 +163,34 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print(f"Using Device: {device}")
 
+# Data-Loader
+with open("Datasets/Harry_Potter_Books.txt", "r", encoding="UTF-8") as file:
+    text = file.read()
+
+encoder = tiktoken.get_encoding('gpt2')
+encodedDataTokens = encoder.encode(text)
+
+Batch, Time = 4, 32
+buffer = torch.tensor(encodedDataTokens[:Batch*Time + 1])
+inputs = buffer[:-1].view(Batch, Time)
+labels = buffer[1:].view(Batch, Time)
+
+# Constructing Model
 model = GPTModel(GPTConfiguration())
 
 model.eval()
 model.to(device=device)
 
+logits, loss = model(inputs, labels)
+print(loss)
+
+# Halting Generation...(Will Remove Later)
+import sys; sys.exit(0)
+
 # Generation
 maximumGenerationLength = 30
 numberOfSequences = 5
 
-encoder = tiktoken.get_encoding('gpt2')
 encodedTokens = encoder.encode("Hello, I'm a language model,")
 encodedTokens = torch.tensor(encodedTokens, dtype=torch.long)
 encodedTokens = encodedTokens.unsqueeze(0).repeat(numberOfSequences, 1)

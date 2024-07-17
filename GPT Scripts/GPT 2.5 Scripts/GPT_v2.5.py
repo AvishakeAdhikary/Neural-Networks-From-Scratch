@@ -44,7 +44,6 @@ class MultiLayerPerceptron(torch.nn.Module):
         inputs = self.currentProjection(inputs)
         return inputs
 
-
 # Transformer Block
 class Block(torch.nn.Module):
     def __init__(self, configuration):
@@ -154,7 +153,6 @@ class GPTModel(torch.nn.Module):
                     stateDictionary[customKey].copy_(huggingfaceStateDictionary[huggingfaceKey])
         return model
 
-
 # Device Auto-Detection
 device = "cpu"
 if torch.cuda.is_available():
@@ -172,6 +170,7 @@ encodedDataTokens = encoder.encode(text)
 
 Batch, Time = 4, 32
 buffer = torch.tensor(encodedDataTokens[:Batch*Time + 1])
+buffer = buffer.to(device=device)
 inputs = buffer[:-1].view(Batch, Time)
 labels = buffer[1:].view(Batch, Time)
 
@@ -181,8 +180,15 @@ model = GPTModel(GPTConfiguration())
 model.eval()
 model.to(device=device)
 
-logits, loss = model(inputs, labels)
-print(loss)
+# Optimization
+epochs = 50
+optimizer = torch.optim.AdamW(params=model.parameters(), lr=3e-4)
+for epoch in range(epochs):
+    optimizer.zero_grad()
+    logits, loss = model(inputs, labels)
+    loss.backward()
+    optimizer.step()
+    print(f"Step: {epoch}, Loss: {loss.item()}")
 
 # Halting Generation...(Will Remove Later)
 import sys; sys.exit(0)
@@ -196,8 +202,8 @@ encodedTokens = torch.tensor(encodedTokens, dtype=torch.long)
 encodedTokens = encodedTokens.unsqueeze(0).repeat(numberOfSequences, 1)
 inputs = encodedTokens.to(device=device)
 
-torch.manual_seed(42)
-torch.cuda.manual_seed(42)
+torch.manual_seed(69)
+torch.cuda.manual_seed(69)
 
 while inputs.size(1) < maximumGenerationLength:
     with torch.no_grad():

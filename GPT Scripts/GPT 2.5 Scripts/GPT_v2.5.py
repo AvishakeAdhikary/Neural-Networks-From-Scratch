@@ -153,6 +153,32 @@ class GPTModel(torch.nn.Module):
                     stateDictionary[customKey].copy_(huggingfaceStateDictionary[huggingfaceKey])
         return model
 
+# Data-Loader
+class DataLoaderLite:
+    def __init__(self, Batch, Time):
+        self.Batch = Batch
+        self.Time = Time
+        with open("Datasets/Harry_Potter_Books.txt", "r", encoding="UTF-8") as file:
+            text = file.read()
+        encoder = tiktoken.get_encoding('gpt2')
+        encodedDataTokens = encoder.encode(text)
+        self.encodedDataTokens = torch.tensor(encodedDataTokens)
+        print(f"Loaded {len(self.encodedDataTokens)} Tokens")
+        print(f"1 Epoch = {len(self.encodedDataTokens) // (Batch * Time)} Batches")
+
+        # State
+        self.currentPosition = 0
+        
+    def nextBatch(self):
+        Batch, Time = self.Batch, self.Time
+        buffer = self.encodedDataTokens[self.currentPosition : self.currentPosition + Batch*Time + 1]
+        inputs = buffer[:-1].view(Batch, Time)
+        labels = buffer[1:].view(Batch, Time)
+        self.currentPosition += Batch * Time
+        if self.currentPosition + (Batch * Time + 1) > len(self.encodedDataTokens):
+            self.currentPosition = 0
+        return inputs, labels
+
 # Device Auto-Detection
 device = "cpu"
 if torch.cuda.is_available():
@@ -162,17 +188,8 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"Using Device: {device}")
 
 # Data-Loader
-with open("Datasets/Harry_Potter_Books.txt", "r", encoding="UTF-8") as file:
-    text = file.read()
-
-encoder = tiktoken.get_encoding('gpt2')
-encodedDataTokens = encoder.encode(text)
-
 Batch, Time = 4, 32
-buffer = torch.tensor(encodedDataTokens[:Batch*Time + 1])
-buffer = buffer.to(device=device)
-inputs = buffer[:-1].view(Batch, Time)
-labels = buffer[1:].view(Batch, Time)
+trainingLoader = DataLoaderLite(Batch=Batch, Time=Time)
 
 # Constructing Model
 model = GPTModel(GPTConfiguration())
@@ -184,6 +201,8 @@ model.to(device=device)
 epochs = 50
 optimizer = torch.optim.AdamW(params=model.parameters(), lr=3e-4)
 for epoch in range(epochs):
+    inputs, labels = trainingLoader.nextBatch()
+    inputs, labels = inputs.to(device=device), labels.to(device=device)
     optimizer.zero_grad()
     logits, loss = model(inputs, labels)
     loss.backward()

@@ -82,6 +82,9 @@ class GPTModel(torch.nn.Module):
 
         self.languageModelingHead = torch.nn.Linear(configuration.numberOfEmbeddingDimensions, configuration.vocabularySize, bias=False)
     
+        # Weight-Sharing-Scheme (Parameter Weight Sharing)
+        self.transformer.wordTokenEmbeddings.weight = self.languageModelingHead.weight
+
     def forward(self, indeces, labels=None):
         Batch, Time = indeces.size()
         assert Time <= self.configuration.blockSize, f"Cannot forward sequence of length {Time}, Block Size is only {self.configuration.blockSize}"
@@ -216,6 +219,7 @@ import sys; sys.exit(0)
 maximumGenerationLength = 30
 numberOfSequences = 5
 
+encoder = tiktoken.get_encoding('gpt2')
 encodedTokens = encoder.encode("Hello, I'm a language model,")
 encodedTokens = torch.tensor(encodedTokens, dtype=torch.long)
 encodedTokens = encodedTokens.unsqueeze(0).repeat(numberOfSequences, 1)
@@ -226,7 +230,7 @@ torch.cuda.manual_seed(69)
 
 while inputs.size(1) < maximumGenerationLength:
     with torch.no_grad():
-        logits = model(inputs)
+        logits, loss = model(inputs)
         logits = logits[:, -1, :]
         probabilites = F.softmax(logits, dim=-1)
 

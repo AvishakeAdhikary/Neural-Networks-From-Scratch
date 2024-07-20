@@ -85,6 +85,9 @@ class GPTModel(torch.nn.Module):
         # Weight-Sharing-Scheme (Parameter Weight Sharing)
         self.transformer.wordTokenEmbeddings.weight = self.languageModelingHead.weight
 
+        # Initialize Correct Parameters
+        self.apply(self._initializeParameters)
+
     def forward(self, indeces, labels=None):
         Batch, Time = indeces.size()
         assert Time <= self.configuration.blockSize, f"Cannot forward sequence of length {Time}, Block Size is only {self.configuration.blockSize}"
@@ -102,6 +105,14 @@ class GPTModel(torch.nn.Module):
         if labels is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
         return logits, loss
+
+    def _initializeParameters(self, module):
+        if isinstance(module, torch.nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, torch.nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     # Method to transfer weights from Hugging Face GPT-2
     @classmethod

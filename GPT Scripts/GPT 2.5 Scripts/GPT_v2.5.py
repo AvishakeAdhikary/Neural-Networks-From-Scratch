@@ -66,6 +66,7 @@ class GPTConfiguration:
     numberOfLayers: int = 12
     numberOfHeads: int = 12
     numberOfEmbeddingDimensions: int = 768
+    NANOGPT_SCALE_INIT: bool = True
 
 # GPT model architecture
 class GPTModel(torch.nn.Module):
@@ -108,7 +109,10 @@ class GPTModel(torch.nn.Module):
 
     def _initializeParameters(self, module):
         if isinstance(module, torch.nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            standardDeviation = 0.02
+            if self.configuration.NANOGPT_SCALE_INIT:
+                standardDeviation *= (2 * self.configuration.numberOfLayers) ** -0.5
+            torch.nn.init.normal_(module.weight, mean=0.0, std=standardDeviation)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, torch.nn.Embedding):

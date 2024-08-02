@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 import math
 import tiktoken
+import time
 
 # Causal Self Attention (Scaled Dot-Product Attention + Multi-Head Attention)
 class CausalSelfAttention(torch.nn.Module):
@@ -219,13 +220,17 @@ model.to(device=device)
 epochs = 50
 optimizer = torch.optim.AdamW(params=model.parameters(), lr=3e-4)
 for epoch in range(epochs):
+    startTime = time.time()
     inputs, labels = trainingLoader.nextBatch()
     inputs, labels = inputs.to(device=device), labels.to(device=device)
     optimizer.zero_grad()
     logits, loss = model(inputs, labels)
     loss.backward()
     optimizer.step()
-    print(f"Step: {epoch}, Loss: {loss.item()}")
+    torch.cuda.synchronize()
+    endTime = time.time()
+    timeDifference = (endTime - startTime) * 1000
+    print(f"Step: {epoch}, Loss: {loss.item()}, Time Difference: {timeDifference:.2f}ms")
 
 # Halting Generation...(Will Remove Later)
 import sys; sys.exit(0)

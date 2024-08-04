@@ -224,13 +224,15 @@ for epoch in range(epochs):
     inputs, labels = trainingLoader.nextBatch()
     inputs, labels = inputs.to(device=device), labels.to(device=device)
     optimizer.zero_grad()
-    logits, loss = model(inputs, labels)
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        logits, loss = model(inputs, labels)
     loss.backward()
     optimizer.step()
     torch.cuda.synchronize()
     endTime = time.time()
     timeDifference = (endTime - startTime) * 1000
-    print(f"Step: {epoch}, Loss: {loss.item()}, Time Difference: {timeDifference:.2f}ms")
+    tokensPerSecond = (trainingLoader.Batch * trainingLoader.Time) / (endTime - startTime)
+    print(f"Step: {epoch}, Loss: {loss.item()}, Time Difference: {timeDifference:.2f}ms, Tokens/Second: {tokensPerSecond:.2f}tokens/sec")
 
 # Halting Generation...(Will Remove Later)
 import sys; sys.exit(0)

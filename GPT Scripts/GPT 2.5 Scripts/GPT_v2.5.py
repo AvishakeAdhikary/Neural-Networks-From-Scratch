@@ -14,7 +14,6 @@ class CausalSelfAttention(torch.nn.Module):
         self.causalProjection = torch.nn.Linear(configuration.numberOfEmbeddingDimensions, configuration.numberOfEmbeddingDimensions)
         self.numberOfHeads = configuration.numberOfHeads
         self.numberOfEmbeddingDimensions = configuration.numberOfEmbeddingDimensions
-        self.register_buffer("bias", torch.tril(torch.ones(configuration.blockSize, configuration.blockSize)).view(1, 1, configuration.blockSize, configuration.blockSize))
     
     def forward(self, inputs):
         B, T, C = inputs.size()
@@ -23,10 +22,7 @@ class CausalSelfAttention(torch.nn.Module):
         query = query.view(B, T, self.numberOfHeads, C // self.numberOfHeads).transpose(1, 2)
         key = key.view(B, T, self.numberOfHeads, C // self.numberOfHeads).transpose(1, 2)
         value = value.view(B, T, self.numberOfHeads, C // self.numberOfHeads).transpose(1, 2)
-        attention = (query @ key.transpose(-2, -1)) * (1.0 / math.sqrt(key.size(-1)))
-        attention = attention.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))
-        attention = F.softmax(attention, dim=-1)
-        outputs = attention @ value
+        outputs = F.scaled_dot_product_attention(query=query, key=key, value=value, is_causal=True)
         outputs = outputs.transpose(1, 2).contiguous().view(B, T, C)
         outputs = self.causalProjection(outputs)
         return outputs
@@ -215,6 +211,7 @@ model = GPTModel(GPTConfiguration())
 
 model.eval()
 model.to(device=device)
+model = torch.compile(model)
 
 # Optimization
 epochs = 50

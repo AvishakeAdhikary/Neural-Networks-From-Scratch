@@ -207,7 +207,7 @@ Batch, Time = 4, 32
 trainingLoader = DataLoaderLite(Batch=Batch, Time=Time)
 
 # Constructing Model
-model = GPTModel(GPTConfiguration())
+model = GPTModel(GPTConfiguration(vocabularySize=50304))
 
 model.eval()
 model.to(device=device)
@@ -215,7 +215,7 @@ model = torch.compile(model)
 
 # Optimization
 epochs = 50
-optimizer = torch.optim.AdamW(params=model.parameters(), lr=3e-4)
+optimizer = torch.optim.AdamW(params=model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
 for epoch in range(epochs):
     startTime = time.time()
     inputs, labels = trainingLoader.nextBatch()
@@ -224,12 +224,13 @@ for epoch in range(epochs):
     with torch.autocast(device_type=device, dtype=torch.bfloat16):
         logits, loss = model(inputs, labels)
     loss.backward()
+    normalization = torch.nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=1.0)
     optimizer.step()
     torch.cuda.synchronize()
     endTime = time.time()
     timeDifference = (endTime - startTime) * 1000
     tokensPerSecond = (trainingLoader.Batch * trainingLoader.Time) / (endTime - startTime)
-    print(f"Step: {epoch}, Loss: {loss.item()}, Time Difference: {timeDifference:.2f}ms, Tokens/Second: {tokensPerSecond:.2f}tokens/sec")
+    print(f"Step: {epoch}, Loss: {loss.item()}, Normalization: {normalization:.4f}, Time Difference: {timeDifference:.2f}ms, Tokens/Second: {tokensPerSecond:.2f}tokens/sec")
 
 # Halting Generation...(Will Remove Later)
 import sys; sys.exit(0)

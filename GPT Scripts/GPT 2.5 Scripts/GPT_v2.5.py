@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import math
 import tiktoken
 import time
+import inspect
 
 # Causal Self Attention (Scaled Dot-Product Attention + Multi-Head Attention)
 class CausalSelfAttention(torch.nn.Module):
@@ -167,6 +168,34 @@ class GPTModel(torch.nn.Module):
                 with torch.no_grad():
                     stateDictionary[customKey].copy_(huggingfaceStateDictionary[huggingfaceKey])
         return model
+    
+    def configureOptimizers(self, weightDecayRate, learningRate, device):
+        parameterDictionary = {parameterNumber: parameter for parameterNumber, parameter in self.named_parameters()}
+        parameterDictionary = {parameterNumber: parameter for parameterNumber, parameter in parameterDictionary.items() if parameter.requires_grad}
+
+        decayParameters = [parameter for parameterNumber, parameter in parameterDictionary.items() if parameter.dim() >= 2]
+        nonDecayParameters = [parameter for parameterNumber, parameter in parameterDictionary.items() if parameter.dim() < 2]
+
+        optimizerGroups = [
+            {
+                'params': decayParameters, 'weight_decay': weightDecayRate
+            },
+            {
+                'params': nonDecayParameters, 'weight_decay': 0.0
+            }
+        ]
+        numberOfDecayParameters = sum(parameter.numel() for parameter in decayParameters)
+        numberOfNonDecayParameters = sum(parameter.numel() for parameter in nonDecayParameters)
+
+        print(f"Number of decayed parameter tensors: {len(decayParameters)}, with {numberOfDecayParameters} parameters")
+        print(f"Number of non-decayed parameter tensors: {len(nonDecayParameters)}, with {numberOfNonDecayParameters} parameters")
+
+        isFusedAvailable = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+        useFused = isFusedAvailable and device == "cuda"
+        print(f"Using Fused AdamW: {useFused}")
+        optimizer = torch.optim.AdamW(params=optimizerGroups, lr=learningRate, betas=(0.9, 0.95), eps=1e-8, fused=useFused)
+        return optimizer
+
 
 # Data-Loader
 class DataLoaderLite:
@@ -214,8 +243,21 @@ model.to(device=device)
 model = torch.compile(model)
 
 # Optimization
+maximumLearningRate = 6e-4
+minimumLearningRate = maximumLearningRate * 0.1
+warmupEpochs = 10
 epochs = 50
-optimizer = torch.optim.AdamW(params=model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)
+def getLearningRate(epoch):
+    if epoch < warmupEpochs:
+        return maximumLearningRate * (epoch + 1) / warmupEpochs
+    if epoch > epochs:
+        return minimumLearningRate
+    decayRatio = (epoch - warmupEpochs) / (epochs - warmupEpochs)
+    assert 0 <= decayRatio <= 1
+    coefficient = 0.5 * (1.0 + math.cos(math.pi * decayRatio))
+    return minimumLearningRate + coefficient * (maximumLearningRate - minimumLearningRate)
+
+optimizer = model.configureOptimizers(weightDecayRate=0.1, learningRate=maximumLearningRate, device=device)
 for epoch in range(epochs):
     startTime = time.time()
     inputs, labels = trainingLoader.nextBatch()
@@ -225,12 +267,15 @@ for epoch in range(epochs):
         logits, loss = model(inputs, labels)
     loss.backward()
     normalization = torch.nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=1.0)
+    learningRate = getLearningRate(epoch=epoch)
+    for parameterGroup in optimizer.param_groups:
+        parameterGroup['lr'] = learningRate
     optimizer.step()
     torch.cuda.synchronize()
     endTime = time.time()
     timeDifference = (endTime - startTime) * 1000
     tokensPerSecond = (trainingLoader.Batch * trainingLoader.Time) / (endTime - startTime)
-    print(f"Step: {epoch}, Loss: {loss.item()}, Normalization: {normalization:.4f}, Time Difference: {timeDifference:.2f}ms, Tokens/Second: {tokensPerSecond:.2f}tokens/sec")
+    print(f"Step: {epoch}, Loss: {loss.item()}, Learning Rate: {learningRate:.4e},  Normalization: {normalization:.4f}, Time Difference: {timeDifference:.2f}ms, Tokens/Second: {tokensPerSecond:.2f}tokens/sec")
 
 # Halting Generation...(Will Remove Later)
 import sys; sys.exit(0)

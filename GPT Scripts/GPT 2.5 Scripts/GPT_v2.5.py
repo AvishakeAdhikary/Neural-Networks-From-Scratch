@@ -5,6 +5,9 @@ import math
 import tiktoken
 import time
 import inspect
+import os
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group
 
 # Causal Self Attention (Scaled Dot-Product Attention + Multi-Head Attention)
 class CausalSelfAttention(torch.nn.Module):
@@ -224,12 +227,27 @@ class DataLoaderLite:
         return inputs, labels
 
 # Device Auto-Detection
-device = "cpu"
-if torch.cuda.is_available():
-    device = "cuda"
-elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-    device = "mps"
-print(f"Using Device: {device}")
+ddp = int(os.environ.get('RANK', -1)) != -1
+if ddp:
+    assert torch.cuda.is_available(), "We need CUDA for DDP, because DDP for CPUs makes less sense"
+    init_process_group(backend="nccl")
+    DDPRank = int(os.environ['RANK'])
+    DDPLocalRank = int(os.environ['LOCAL_RANK'])
+    DDPWorldSize = int(os.environ['WORLD_SIZE'])
+    device = f'cuda:{DDPLocalRank}'
+    torch.cuda.set_device(device=device)
+    masterProcess = DDPRank == 0
+else:
+    DDPRank = 0
+    DDPLocalRank = 0
+    DDPWorldSize = 1
+    masterProcess = True
+    device = "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+    print(f"Using Device: {device}")
 
 # Data-Loader
 totalBatchSize = 524288

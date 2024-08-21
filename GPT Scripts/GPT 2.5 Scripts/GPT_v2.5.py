@@ -232,7 +232,12 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print(f"Using Device: {device}")
 
 # Data-Loader
+totalBatchSize = 524288
 Batch, Time = 4, 32
+assert totalBatchSize % (Batch * Time) == 0, f"Make sure totalBatchSize is divisible by (Batch * Time)"
+gradientAccumulationSteps = totalBatchSize // (Batch * Time)
+print(f"Total Desired Batch Size: {totalBatchSize}")
+print(f"Calculated Gradient Accumulation Steps: {gradientAccumulationSteps}")
 trainingLoader = DataLoaderLite(Batch=Batch, Time=Time)
 
 # Constructing Model
@@ -260,12 +265,16 @@ def getLearningRate(epoch):
 optimizer = model.configureOptimizers(weightDecayRate=0.1, learningRate=maximumLearningRate, device=device)
 for epoch in range(epochs):
     startTime = time.time()
-    inputs, labels = trainingLoader.nextBatch()
-    inputs, labels = inputs.to(device=device), labels.to(device=device)
     optimizer.zero_grad()
-    with torch.autocast(device_type=device, dtype=torch.bfloat16):
-        logits, loss = model(inputs, labels)
-    loss.backward()
+    lossAccumulator = 0.0
+    for microStep in range(gradientAccumulationSteps):
+        inputs, labels = trainingLoader.nextBatch()
+        inputs, labels = inputs.to(device=device), labels.to(device=device)
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            logits, loss = model(inputs, labels)
+        loss = loss / gradientAccumulationSteps
+        lossAccumulator += loss.detach()
+        loss.backward()
     normalization = torch.nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=1.0)
     learningRate = getLearningRate(epoch=epoch)
     for parameterGroup in optimizer.param_groups:
@@ -274,8 +283,8 @@ for epoch in range(epochs):
     torch.cuda.synchronize()
     endTime = time.time()
     timeDifference = (endTime - startTime) * 1000
-    tokensPerSecond = (trainingLoader.Batch * trainingLoader.Time) / (endTime - startTime)
-    print(f"Step: {epoch}, Loss: {loss.item()}, Learning Rate: {learningRate:.4e},  Normalization: {normalization:.4f}, Time Difference: {timeDifference:.2f}ms, Tokens/Second: {tokensPerSecond:.2f}tokens/sec")
+    tokensPerSecond = (trainingLoader.Batch * trainingLoader.Time) * gradientAccumulationSteps / (endTime - startTime)
+    print(f"Step: {epoch}, Loss: {lossAccumulator.item():.6f}, Learning Rate: {learningRate:.4e},  Normalization: {normalization:.4f}, Time Difference: {timeDifference:.2f}ms, Tokens/Second: {tokensPerSecond:.2f}tokens/sec")
 
 # Halting Generation...(Will Remove Later)
 import sys; sys.exit(0)

@@ -172,7 +172,7 @@ class GPTModel(torch.nn.Module):
                     stateDictionary[customKey].copy_(huggingfaceStateDictionary[huggingfaceKey])
         return model
     
-    def configureOptimizers(self, weightDecayRate, learningRate, device):
+    def configureOptimizers(self, weightDecayRate, learningRate, device_type):
         parameterDictionary = {parameterNumber: parameter for parameterNumber, parameter in self.named_parameters()}
         parameterDictionary = {parameterNumber: parameter for parameterNumber, parameter in parameterDictionary.items() if parameter.requires_grad}
 
@@ -194,7 +194,7 @@ class GPTModel(torch.nn.Module):
         print(f"Number of non-decayed parameter tensors: {len(nonDecayParameters)}, with {numberOfNonDecayParameters} parameters")
 
         isFusedAvailable = 'fused' in inspect.signature(torch.optim.AdamW).parameters
-        useFused = isFusedAvailable and device == "cuda"
+        useFused = isFusedAvailable and device_type == "cuda"
         print(f"Using Fused AdamW: {useFused}")
         optimizer = torch.optim.AdamW(params=optimizerGroups, lr=learningRate, betas=(0.9, 0.95), eps=1e-8, fused=useFused)
         return optimizer
@@ -251,6 +251,9 @@ else:
         device = "mps"
     print(f"Using Device: {device}")
 
+# Adding Device Type
+device_type = "cuda" if device.startswith("cuda") else "cpu"
+
 # Adding Seeds
 torch.manual_seed(69)
 if torch.cuda.is_available():
@@ -274,6 +277,7 @@ model.to(device=device)
 model = torch.compile(model)
 if ddp:
     model = DDP(model, device_ids=[DDPLocalRank])
+rawModel = model.module if ddp else model
 
 # Optimization
 maximumLearningRate = 6e-4
@@ -290,7 +294,7 @@ def getLearningRate(epoch):
     coefficient = 0.5 * (1.0 + math.cos(math.pi * decayRatio))
     return minimumLearningRate + coefficient * (maximumLearningRate - minimumLearningRate)
 
-optimizer = model.configureOptimizers(weightDecayRate=0.1, learningRate=maximumLearningRate, device=device)
+optimizer = rawModel.configureOptimizers(weightDecayRate=0.1, learningRate=maximumLearningRate, device_type=device_type)
 for epoch in range(epochs):
     startTime = time.time()
     optimizer.zero_grad()
@@ -298,21 +302,30 @@ for epoch in range(epochs):
     for microStep in range(gradientAccumulationSteps):
         inputs, labels = trainingLoader.nextBatch()
         inputs, labels = inputs.to(device=device), labels.to(device=device)
-        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        if ddp:
+            model.require_backward_grad_sync = (microStep == gradientAccumulationSteps - 1)
+        with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
             logits, loss = model(inputs, labels)
         loss = loss / gradientAccumulationSteps
         lossAccumulator += loss.detach()
         loss.backward()
+    if ddp:
+        torch.distributed.all_reduce(lossAccumulator, op=torch.distributed.ReduceOp.AVG)
     normalization = torch.nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=1.0)
     learningRate = getLearningRate(epoch=epoch)
     for parameterGroup in optimizer.param_groups:
         parameterGroup['lr'] = learningRate
     optimizer.step()
-    torch.cuda.synchronize()
+    if device_type == "cuda":
+        torch.cuda.synchronize()
     endTime = time.time()
     timeDifference = (endTime - startTime) * 1000
-    tokensPerSecond = (trainingLoader.Batch * trainingLoader.Time) * gradientAccumulationSteps / (endTime - startTime)
-    print(f"Step: {epoch}, Loss: {lossAccumulator.item():.6f}, Learning Rate: {learningRate:.4e},  Normalization: {normalization:.4f}, Time Difference: {timeDifference:.2f}ms, Tokens/Second: {tokensPerSecond:.2f}tokens/sec")
+    tokensPerSecond = (trainingLoader.Batch * trainingLoader.Time * gradientAccumulationSteps * DDPWorldSize) / (endTime - startTime)
+    if masterProcess:
+        print(f"Step: {epoch}, Loss: {lossAccumulator.item():.6f}, Learning Rate: {learningRate:.4e},  Normalization: {normalization:.4f}, Time Difference: {timeDifference:.2f}ms, Tokens/Second: {tokensPerSecond:.2f}tokens/sec")
+if ddp:
+    destroy_process_group()
+
 
 # Halting Generation...(Will Remove Later)
 import sys; sys.exit(0)

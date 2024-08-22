@@ -326,10 +326,6 @@ for epoch in range(epochs):
 if ddp:
     destroy_process_group()
 
-
-# Halting Generation...(Will Remove Later)
-import sys; sys.exit(0)
-
 # Generation
 maximumGenerationLength = 30
 numberOfSequences = 5

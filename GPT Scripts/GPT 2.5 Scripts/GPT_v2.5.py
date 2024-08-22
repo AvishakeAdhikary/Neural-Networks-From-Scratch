@@ -202,9 +202,11 @@ class GPTModel(torch.nn.Module):
 
 # Data-Loader
 class DataLoaderLite:
-    def __init__(self, Batch, Time):
+    def __init__(self, Batch, Time, processRank, numberOfProcesses):
         self.Batch = Batch
         self.Time = Time
+        self.processRank = processRank
+        self.numberOfProcesses = numberOfProcesses
         with open("Datasets/Harry_Potter_Books.txt", "r", encoding="UTF-8") as file:
             text = file.read()
         encoder = tiktoken.get_encoding('gpt2')
@@ -214,16 +216,16 @@ class DataLoaderLite:
         print(f"1 Epoch = {len(self.encodedDataTokens) // (Batch * Time)} Batches")
 
         # State
-        self.currentPosition = 0
+        self.currentPosition = self.Batch * self.Time * self.processRank
         
     def nextBatch(self):
         Batch, Time = self.Batch, self.Time
         buffer = self.encodedDataTokens[self.currentPosition : self.currentPosition + Batch*Time + 1]
         inputs = buffer[:-1].view(Batch, Time)
         labels = buffer[1:].view(Batch, Time)
-        self.currentPosition += Batch * Time
-        if self.currentPosition + (Batch * Time + 1) > len(self.encodedDataTokens):
-            self.currentPosition = 0
+        self.currentPosition += Batch * Time * self.numberOfProcesses
+        if self.currentPosition + (Batch * Time * self.numberOfProcesses + 1) > len(self.encodedDataTokens):
+            self.currentPosition = self.Batch * self.Time * self.processRank
         return inputs, labels
 
 # Device Auto-Detection
@@ -249,14 +251,20 @@ else:
         device = "mps"
     print(f"Using Device: {device}")
 
+# Adding Seeds
+torch.manual_seed(69)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(69)
+
 # Data-Loader
 totalBatchSize = 524288
 Batch, Time = 4, 32
-assert totalBatchSize % (Batch * Time) == 0, f"Make sure totalBatchSize is divisible by (Batch * Time)"
-gradientAccumulationSteps = totalBatchSize // (Batch * Time)
-print(f"Total Desired Batch Size: {totalBatchSize}")
-print(f"Calculated Gradient Accumulation Steps: {gradientAccumulationSteps}")
-trainingLoader = DataLoaderLite(Batch=Batch, Time=Time)
+assert totalBatchSize % (Batch * Time) == 0, f"Make sure totalBatchSize is divisible by (Batch * Time * DDPWorldSize)"
+gradientAccumulationSteps = totalBatchSize // (Batch * Time * DDPWorldSize)
+if masterProcess:
+    print(f"Total Desired Batch Size: {totalBatchSize}")
+    print(f"Calculated Gradient Accumulation Steps: {gradientAccumulationSteps}")
+trainingLoader = DataLoaderLite(Batch=Batch, Time=Time, processRank=DDPRank, numberOfProcesses=DDPWorldSize)
 
 # Constructing Model
 model = GPTModel(GPTConfiguration(vocabularySize=50304))
@@ -264,6 +272,8 @@ model = GPTModel(GPTConfiguration(vocabularySize=50304))
 model.eval()
 model.to(device=device)
 model = torch.compile(model)
+if ddp:
+    model = DDP(model, device_ids=[DDPLocalRank])
 
 # Optimization
 maximumLearningRate = 6e-4
@@ -316,9 +326,6 @@ encodedTokens = encoder.encode("Hello, I'm a language model,")
 encodedTokens = torch.tensor(encodedTokens, dtype=torch.long)
 encodedTokens = encodedTokens.unsqueeze(0).repeat(numberOfSequences, 1)
 inputs = encodedTokens.to(device=device)
-
-torch.manual_seed(69)
-torch.cuda.manual_seed(69)
 
 while inputs.size(1) < maximumGenerationLength:
     with torch.no_grad():
